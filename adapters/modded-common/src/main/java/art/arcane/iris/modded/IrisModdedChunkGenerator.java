@@ -331,33 +331,112 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
         if (server == null) {
             return null;
         }
-        // Snapshot, never server.getAllLevels(): this runs off the server thread from data queries.
-        for (ServerLevel level : ModdedServerLevels.levels(server)) {
+        ServerLevel resolved = resolveBoundLevel(server, ModdedServerLevels.levels(server));
+        if (resolved != null) {
+            boundLevel = resolved;
+        }
+        return resolved;
+    }
+
+    ServerLevel resolveBoundLevel(MinecraftServer server, List<ServerLevel> snapshot) {
+        for (ServerLevel level : snapshot) {
             if (level.getChunkSource().getGenerator() == this) {
-                boundLevel = level;
                 return level;
             }
         }
-        return null;
+        ServerLevel overworld = server.getLevel(Level.OVERWORLD);
+        return overworld != null && overworld.getChunkSource().getGenerator() == this ? overworld : null;
     }
 
     Engine engine() {
-        requireBindingAllowed();
-        Engine cached = engine;
-        requireCompletedShutdown(cached);
-        if (cached != null && !cached.isClosed()) {
+        Engine cached = readyEngine();
+        if (cached != null) {
             return cached;
         }
         ServerLevel level = boundLevel();
         if (level == null) {
             throw new IllegalStateException("Iris generator '" + dimensionKey + "' has no bound ServerLevel yet");
         }
-        return bindEngine(level);
+        return bindGenerationLevel(level);
+    }
+
+    private Engine engine(ResourceKey<Level> levelKey) {
+        Engine cached = readyEngine();
+        if (cached != null) {
+            return cached;
+        }
+        ServerLevel level = boundLevel;
+        if (level == null) {
+            level = requirePublishedLevel(ModdedEngineBootstrap.currentServer(), levelKey);
+        } else {
+            requireGeneratorLevel(level, levelKey);
+        }
+        return bindGenerationLevel(level);
+    }
+
+    private Engine engine(ServerLevel generationLevel) {
+        Engine cached = readyEngine();
+        if (cached != null) {
+            return cached;
+        }
+        ServerLevel level = boundLevel == null ? generationLevel : boundLevel;
+        requireGeneratorLevel(level, generationLevel.dimension());
+        return bindGenerationLevel(level);
+    }
+
+    private Engine readyEngine() {
+        requireBindingAllowed();
+        Engine cached = engine;
+        requireCompletedShutdown(cached);
+        if (cached != null && !cached.isClosed()) {
+            return cached;
+        }
+        return null;
+    }
+
+    private Engine bindGenerationLevel(ServerLevel level) {
+        bindLevel(level);
+        Engine bound = readyEngine();
+        if (bound == null) {
+            throw new IllegalStateException("Iris generator '" + dimensionKey
+                    + "' completed generation binding without a ready engine");
+        }
+        return bound;
+    }
+
+    ServerLevel requirePublishedLevel(MinecraftServer server, ResourceKey<Level> levelKey) {
+        if (server == null) {
+            throw new IllegalStateException("Iris generator '" + dimensionKey
+                    + "' cannot resolve level '" + levelKey.identifier() + "': server is unavailable");
+        }
+        ServerLevel level = server.getLevel(levelKey);
+        if (level == null) {
+            throw new IllegalStateException("Iris generator '" + dimensionKey
+                    + "' has no published ServerLevel for '" + levelKey.identifier() + "'");
+        }
+        requireGeneratorLevel(level, levelKey);
+        return level;
+    }
+
+    private void requireGeneratorLevel(ServerLevel level, ResourceKey<Level> levelKey) {
+        if (!levelKey.equals(level.dimension())) {
+            throw new IllegalStateException("Iris generator '" + dimensionKey + "' resolved level '"
+                    + level.dimension().identifier() + "' while binding '" + levelKey.identifier() + "'");
+        }
+        ChunkGenerator publishedGenerator = level.getChunkSource().getGenerator();
+        if (publishedGenerator != this) {
+            throw new IllegalStateException("Published ServerLevel '" + levelKey.identifier()
+                    + "' does not use Iris generator '" + dimensionKey + "'");
+        }
     }
 
     synchronized void bindLevel(ServerLevel level) {
         if (level.getChunkSource().getGenerator() != this) {
             throw new IllegalArgumentException("ServerLevel does not use Iris generator '" + dimensionKey + "'");
+        }
+        Engine current = engineIfBound();
+        if (boundLevel == level && current != null && current.getComplex() != null) {
+            return;
         }
         requireCompletedShutdown(engine);
         unloading = false;
@@ -853,7 +932,6 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
     @Override
     public void applyBiomeDecoration(WorldGenLevel level, ChunkAccess chunk, StructureManager structureManager) {
         Engine current = engine();
-        // Self-heal for an engine bound through a data-query path instead of bindLevel; a no-op once prepared.
         importedFeatures.prepare(current);
         try (GenerationSessionLease lease = requireGenerationLease(current, "modded_biome_decoration");
              IrisContext.Scope ignored = IrisContext.open(current, lease.sessionId(), null)) {
@@ -867,7 +945,7 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
 
     @Override
     public void createStructures(RegistryAccess registryAccess, ChunkGeneratorStructureState structureState, StructureManager structureManager, ChunkAccess chunk, StructureTemplateManager templateManager, ResourceKey<Level> levelKey) {
-        Engine current = engine();
+        Engine current = engine(levelKey);
         try (GenerationSessionLease lease = requireGenerationLease(current, "modded_create_structures");
              IrisContext.Scope ignored = IrisContext.open(current, lease.sessionId(), null)) {
             Map<Structure, StructureStart> previousStarts = new HashMap<>(chunk.getAllStarts());
@@ -891,7 +969,7 @@ public final class IrisModdedChunkGenerator extends ChunkGenerator {
 
     @Override
     public void createReferences(WorldGenLevel level, StructureManager structureManager, ChunkAccess chunk) {
-        Engine current = engine();
+        Engine current = engine(level.getLevel());
         try (GenerationSessionLease lease = requireGenerationLease(current, "modded_create_references");
              IrisContext.Scope ignored = IrisContext.open(current, lease.sessionId(), null)) {
             NativeStructureReferenceRepair.createReferences(

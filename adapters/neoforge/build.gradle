@@ -105,6 +105,7 @@ configurations.testRuntimeClasspath.extendsFrom(configurations.runtimeClasspath,
 
 dependencies {
     testImplementation('junit:junit:4.13.2')
+    testImplementation('org.mockito:mockito-core:5.23.0')
     testRuntimeOnly('org.junit.platform:junit-platform-launcher:6.1.2')
     testRuntimeOnly('org.junit.vintage:junit-vintage-engine:6.1.2')
     compileOnly('org.slf4j:slf4j-api:2.0.17')

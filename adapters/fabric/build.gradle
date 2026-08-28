@@ -114,6 +114,7 @@ dependencies {
     minecraft("com.mojang:minecraft:${minecraftVersion}")
     implementation("net.fabricmc:fabric-loader:${fabricLoaderVersion}")
     testImplementation('junit:junit:4.13.2')
+    testImplementation('org.mockito:mockito-core:5.23.0')
     // registrySync and resourceLoader are LOAD-BEARING despite zero imports anywhere in Iris:
     //   fabric-registry-sync-v0   delays registry freeze past mod init, which is what lets
     //                             IrisFabricBootstrap register the CHUNK_GENERATOR codec in

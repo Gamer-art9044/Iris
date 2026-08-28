@@ -131,6 +131,7 @@ configurations.testRuntimeClasspath.extendsFrom(configurations.runtimeClasspath,
 dependencies {
     implementation minecraft.dependency("net.minecraftforge:forge:${forgeVersion}")
     testImplementation('junit:junit:4.13.2')
+    testImplementation('org.mockito:mockito-core:5.23.0')
     compileOnly('org.slf4j:slf4j-api:2.0.17')
     compileOnly(libs.spigot) {
         transitive = false
